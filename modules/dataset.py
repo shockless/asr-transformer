@@ -8,6 +8,8 @@ from collections import defaultdict
 import torchaudio
 import torch
 
+from math import ceil
+
 from torch.utils.data import Dataset
 
 
@@ -37,7 +39,7 @@ class AudioDataset(Dataset):
         else:
             self.max_audio_len = max_audio_len
         self.max_frames_len = self.max_audio_len * self.sr
-        self.max_spectrogram_len = self.max_frames_len / self.n_fft * 2 + 1
+        self.max_spectrogram_len = ceil(self.max_frames_len / self.n_fft * 2)
         
         
     def __check_tokenizer_length(self, x):

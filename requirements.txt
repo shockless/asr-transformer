@@ -2,3 +2,14 @@ torch
 torchaudio
 
 tokenizers
+transformers
+
+pandas
+numpy
+
+matplotlib
+seaborn
+
+tqdm
+
+soundfile
