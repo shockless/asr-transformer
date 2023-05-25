@@ -53,7 +53,63 @@
   "pre_tokenizer": {
     "type": "Whitespace"
   },
-  "post_processor": null,
+  "post_processor": {
+    "type": "TemplateProcessing",
+    "single": [
+      {
+        "SpecialToken": {
+          "id": "[SOS]",
+          "type_id": 0
+        }
+      },
+      {
+        "Sequence": {
+          "id": "A",
+          "type_id": 0
+        }
+      },
+      {
+        "SpecialToken": {
+          "id": "[EOS]",
+          "type_id": 0
+        }
+      }
+    ],
+    "pair": [
+      {
+        "Sequence": {
+          "id": "A",
+          "type_id": 0
+        }
+      },
+      {
+        "Sequence": {
+          "id": "B",
+          "type_id": 1
+        }
+      }
+    ],
+    "special_tokens": {
+      "[EOS]": {
+        "id": "[EOS]",
+        "ids": [
+          1
+        ],
+        "tokens": [
+          "[EOS]"
+        ]
+      },
+      "[SOS]": {
+        "id": "[SOS]",
+        "ids": [
+          0
+        ],
+        "tokens": [
+          "[SOS]"
+        ]
+      }
+    }
+  },
   "decoder": null,
   "model": {
     "type": "BPE",
