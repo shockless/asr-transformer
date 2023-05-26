@@ -64,8 +64,11 @@ class AudioDataset(Dataset):
                                                            n_mels=self.n_mels,
                                                            center=self.center)
 
-        encoded_text = self.tokenizer.encode(text, padding='max_length', truncation=True,
-                                             max_length=self.max_tokenized_length, return_tensors='pt')
+        encoded_text = self.tokenizer.encode_plus(text, padding='max_length', truncation=True,
+                                             max_length=self.max_tokenized_length, return_tensors='pt',return_attention_mask=True)
+        attention_mask = encoded_text.attention_mask 
+        encoded_text = encoded_text.input_ids  
+        size_no_pad = len([i for i in encoded_text.squeeze() if i!=self.tokenizer.pad_token_id])
         ohe_text = torch.zeros((encoded_text.shape[0], encoded_text.shape[1], len(self.tokenizer)), dtype=torch.int32)
         for i in range(0, ohe_text.shape[1]):
             ohe_text[:, i, encoded_text[:, i]] = 1
@@ -74,6 +77,7 @@ class AudioDataset(Dataset):
                 'ohe_text': ohe_text,
                 'spectre': spectrogram(audio),
                 'audio': audio,
+                'attention_mask': attention_mask.squeeze(),
                 'sr': sr}
 
     # def listen(self, ind):

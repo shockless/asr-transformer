@@ -7,6 +7,7 @@ from torch.autograd import Variable
 
 import numpy as np
 
+
 class MHAHead(nn.Module):
     def __init__(self, emb_dim, r_dim):
         super().__init__()
@@ -30,14 +31,14 @@ class MHAHead(nn.Module):
             q = self.q(x)
             k = self.k(enc_x)
         temp = q.bmm(k.transpose(1, 2)) * (self.emb_dim ** (-0.5))  # B, seq_len, seq_len
+        temp = torch.softmax(temp, dim=-1)
         if attention_mask is not None:
             attention_mask = attention_mask.unsqueeze(dim=2)
-            temp *= attention_mask
-            temp *= attention_mask.transpose(1, 2)
+            temp = temp*attention_mask
+            temp = temp*attention_mask.transpose(1, 2)
 
-        temp = temp.bmm(v)
-
-        return torch.softmax(temp, dim=-1), q
+        temp = temp.bmm(v)  # TODO: LayerNorm
+        return temp, q
 
 
 class MHA(nn.Module):
@@ -79,10 +80,10 @@ class FeedForward(nn.Module):
                                        nn.Linear(self.r_dim, self.emb_dim))
 
     def forward(self, x):
-        x = self.squeeze(x)
-        x = self.GELU(x)
-        x = self.unsqueeze(x)
-        return x
+        x1 = self.squeeze(x)
+        x1 = self.GELU(x1)
+        x1 = self.unsqueeze(x1)
+        return x + x1
 
 
 class TrainablePositionalEncoding(nn.Module):
@@ -109,12 +110,10 @@ class EncoderLayer(nn.Module):
         self.norm2 = nn.LayerNorm(self.emb_dim)
 
     def forward(self, x, attention_mask):
-        temp = self.attention(x, attention_mask=attention_mask)
-        temp += x
-        x = self.norm1(temp)
-        temp = self.ff(x)
-        temp += x
-        x = self.norm2(temp)
+        x = self.attention(x, attention_mask=attention_mask)
+        x = self.norm1(x)
+        x = self.ff(x)
+        x = self.norm2(x)
         return x
 
 
@@ -135,7 +134,7 @@ class Encoder(nn.Module):
                                                   self.num_heads,
                                                   self.ff_dim,
                                                   self.r_dim,
-                                                  self.dropout) for i in range(self.num_layers)])
+                                                  self.dropout) for _ in range(self.num_layers)])
 
     def forward(self, x, attention_mask):
         sizes = x.size()
@@ -163,20 +162,18 @@ class DecoderLayer(nn.Module):
         self.norm3 = nn.LayerNorm(self.emb_dim)
 
     def forward(self, x, attention_mask, enc_x):
-        temp = self.mask_attention(x, attention_mask=attention_mask)
-        temp += x
-        x = self.norm1(temp)
-        temp = self.attention(x, enc_x=enc_x)
-        temp += x
-        x = self.norm2(temp)
-        temp = self.ff(x)
-        temp += x
-        x = self.norm3(temp)
+        x = self.mask_attention(x, attention_mask=attention_mask)
+        x = self.norm1(x)
+        x = self.attention(x, enc_x=enc_x)
+        x = self.norm2(x)
+        x = self.ff(x)
+        x = self.norm3(x)
         return x
 
 
 class Decoder(nn.Module):
-    def __init__(self, vocab_size, seq_len, emb_dim, num_layers, num_heads, ff_dim, r_dim, device, dropout=0.1):
+    def __init__(self, vocab_size, seq_len, emb_dim, num_layers, num_heads, ff_dim, r_dim, device, dropout=0.1,
+                 padding_idx=0):
         super().__init__()
         self.seq_len = seq_len
         self.emb_dim = emb_dim
@@ -187,7 +184,7 @@ class Decoder(nn.Module):
         self.r_dim = r_dim
         self.vocab_size = vocab_size
 
-        self.emb = nn.Embedding(vocab_size, emb_dim)
+        self.emb = nn.Embedding(vocab_size, emb_dim, padding_idx=padding_idx)
         self.pe = TrainablePositionalEncoding(self.seq_len, self.emb_dim, device)
 
         self.layers = nn.ModuleList([DecoderLayer(self.emb_dim,
@@ -195,7 +192,7 @@ class Decoder(nn.Module):
                                                   self.ff_dim,
                                                   self.r_dim,
                                                   self.dropout) for i in range(self.num_layers)])
-        self.classifier = nn.Linear(self.emb_dim, self.vocab_size)
+        self.classifier = nn.Linear(self.emb_dim, self.vocab_size, bias=False)
 
     def forward(self, x, attention_mask, enc_x):
         x = self.emb(x)
@@ -217,9 +214,9 @@ class Transformer(nn.Module):
                  num_heads,
                  ff_dim, r_dim,
                  device,
-                 dropout=0.1,
+                 dropout=0.0,
                  sr=16000,
-                 n_fft=1024):
+                 n_fft=1024, padding_idx=0):
         super().__init__()
         self.n_mels = n_mels
         self.enc_seq_len = ceil(enc_seq_len * sr / n_fft * 2)
@@ -255,26 +252,29 @@ class Transformer(nn.Module):
                                ff_dim=ff_dim,
                                r_dim=r_dim,
                                device=device,
-                               dropout=dropout)
+                               dropout=dropout,
+                               padding_idx=padding_idx)
+        self.device = device
 
     def forward(self, batch):
         enc_x = self.vgg(batch['spectre'])
         enc_x = self.encoder(enc_x, None)
-        logits = self.decoder(batch['encoded_text'], None, enc_x)
+        logits = self.decoder(batch['encoded_text'], batch['attention_mask'], enc_x)
         return logits
 
     def predict(self, batch, bos_token, eos_token, device):
+        dec_in = torch.zeros((batch['spectre'].shape[0], self.seq_len), dtype=torch.int32).to(device)
+        dec_in[:, 0] = bos_token
+        mask = torch.zeros((batch['spectre'].shape[0], self.seq_len), dtype=torch.int32).to(device)
+
         enc_x = self.vgg(batch['spectre'])
         enc_x = self.encoder(enc_x, None)
-        dec_in = torch.zeros((batch['spectre'].shape[0], self.seq_len), dtype=torch.int32)
-        dec_in = dec_in.to(device)
-        mask = torch.zeros((batch['spectre'].shape[0], self.seq_len), dtype=torch.int32)
-        mask = mask.to(device)
-        dec_in[:, 0] = bos_token
+
         for i in range(self.seq_len - 1):
             mask[:, i] = 1
             logits = self.decoder(dec_in, mask, enc_x)
-            dec_in[:, i + 1] = logits.argmax(dim=1)[:, i + 1]
+            dec_in[:, i + 1] = logits[:, i + 1].argmax(dim=-1)
+            dec_in = dec_in * mask
         return dec_in, logits
 
 
@@ -292,12 +292,13 @@ def train_epoch(model, data_loader, tokenizer, loss_function, optimizer, schedul
         batch['encoded_text'] = batch['encoded_text'].to(device)
         batch['spectre'] = batch['spectre'].to(device)
         batch['ohe_text'] = batch['ohe_text'].to(device)
+        batch['attention_mask'] = batch['attention_mask'].to(device)
 
         optimizer.zero_grad()
         logits = model(batch)
 
-        pred = logits.argmax(dim=-1).to('cpu')
-        pred = [tokenizer.decode(i) for i in pred]
+        pred = logits.argmax(dim=-1).to('cpu') * batch['attention_mask'].to('cpu')
+        pred = tokenizer.batch_decode(pred, skip_special_tokens=True)
         preds.append(pred)
         targets.append(batch['text'])
         loss = loss_function(logits.transpose(1, 2), batch['encoded_text'].squeeze())
@@ -321,11 +322,11 @@ def train_epoch(model, data_loader, tokenizer, loss_function, optimizer, schedul
     wer = wer / dl_size
     metrics = {
         "Train Loss": total_train_loss / dl_size,
-        "Train WAcc": 1 - wer.item(),
-        "Train Accuracy": acc,
+        "Train WER": wer.item(),
+        "Train Accuracy": acc_t,
     }
 
-    return metrics
+    return metrics, preds[-1][-1]
 
 
 def eval_epoch(model, data_loader, tokenizer, loss_function, device):
@@ -335,17 +336,17 @@ def eval_epoch(model, data_loader, tokenizer, loss_function, device):
 
     preds = []
     targets = []
-
     dl_size = len(data_loader)
 
     for batch in tqdm(data_loader):
         batch['encoded_text'] = batch['encoded_text'].to(device)
         batch['spectre'] = batch['spectre'].to(device)
         batch['ohe_text'] = batch['ohe_text'].to(device)
+        batch['attention_mask'] = batch['attention_mask'].to(device)
 
         with torch.no_grad():
             pred, logits = model.predict(batch, tokenizer.bos_token_id, tokenizer.eos_token_id, device)
-            pred = [tokenizer.decode(i) for i in pred]
+            pred = tokenizer.batch_decode(pred, skip_special_tokens=True)
             preds.append(pred)
             targets.append(batch['text'])
 
@@ -363,11 +364,11 @@ def eval_epoch(model, data_loader, tokenizer, loss_function, device):
         wer += word_error_rate(preds[batch], targets[batch])
         acc_t += acc
     acc_t = acc_t / dl_size
-    wer = wer / (dl_size)
+    wer = wer / dl_size
     metrics = {
         "Val Loss": total_train_loss / dl_size,
-        "Val WAcc": 1 - wer.item(),
-        "Val Accuracy": acc,
+        "Val WER": wer.item(),
+        "Val Accuracy": acc_t,
     }
 
     return metrics, preds[-1][-1]
