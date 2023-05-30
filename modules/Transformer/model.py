@@ -3,7 +3,7 @@ import torch
 from torch import nn
 
 from modules.Transformer.layers import MHA, FeedForward, TrainablePositionalEncoding
-from modules.masking import get_non_pad_mask, get_attn_pad_mask, get_subsequent_mask, get_attn_key_pad_mask
+from modules.masking import padding_mask, encoder_mask, decoder_mask
 
 
 class EncoderLayer(nn.Module):
@@ -20,7 +20,7 @@ class EncoderLayer(nn.Module):
         self.norm2 = nn.LayerNorm(self.emb_dim)
 
     def forward(self, x, attention_mask, non_pad_mask):
-        x = self.attention(x, x, x, mask=attention_mask)
+        x = self.attention(x, attention_mask=attention_mask)
         x = self.norm1(x)
         x *= non_pad_mask
         x = self.ff(x)
@@ -54,8 +54,8 @@ class Encoder(nn.Module):
 
         x = x.transpose(1, 2).contiguous()
 
-        non_pad_mask = get_non_pad_mask(x, input_lengths=lens)
-        self_attn_mask = get_attn_pad_mask(x, lens, self.seq_len)
+        non_pad_mask = padding_mask(x, input_lengths=lens)
+        self_attn_mask = encoder_mask(x, lens, self.seq_len)
 
         x = self.norm_in(self.lin_in(x)) + self.pe(x)
 
@@ -79,10 +79,10 @@ class DecoderLayer(nn.Module):
         self.norm3 = nn.LayerNorm(self.emb_dim)
 
     def forward(self, x, attention_mask, enc_x, enc_mask, non_pad_mask):
-        x = self.mask_attention(x, x, x, mask=attention_mask)
+        x = self.mask_attention(x, attention_mask=attention_mask)
         x = self.norm1(x)
         x *= non_pad_mask
-        x = self.attention(x, enc_x, enc_x, mask=enc_mask)
+        x = self.attention(x, enc_x=enc_x, attention_mask=enc_mask)
         x = self.norm2(x)
         x *= non_pad_mask
         x = self.ff(x)
@@ -116,11 +116,9 @@ class Decoder(nn.Module):
         self.classifier = nn.Linear(self.emb_dim, self.vocab_size, bias=False)
 
     def forward(self, x, enc_x, enc_lens):
-        non_pad_mask = get_non_pad_mask(x, pad_idx=self.eos_token)
-        attention_mask = get_subsequent_mask(x)
-        self_attn_mask_keypad = get_attn_key_pad_mask(seq_k=x, seq_q=x, pad_idx=self.eos_token)
-        attention_mask = (attention_mask + self_attn_mask_keypad).gt(0)
-        dec_enc_attn_mask = get_attn_pad_mask(enc_x, enc_lens, self.seq_len)
+        non_pad_mask = padding_mask(x, padding_token_id=self.eos_token)
+        attention_mask = decoder_mask(x, padding_token_id=self.eos_token).gt(0)
+        dec_enc_attn_mask = encoder_mask(enc_x, enc_lens, self.seq_len)
         x = self.emb(x) + self.pe(x)
         for i in range(self.num_layers):
             x = self.layers[i](x, attention_mask, enc_x, dec_enc_attn_mask, non_pad_mask)
@@ -130,7 +128,7 @@ class Decoder(nn.Module):
         dec_in = torch.full((enc_x.shape[0], 1), self.bos_token, dtype=torch.int32).to(device)
         for i in range(self.seq_len):
             non_pad_mask = torch.ones_like(dec_in).float().unsqueeze(-1)
-            attention_mask = get_subsequent_mask(dec_in)
+            attention_mask = decoder_mask(dec_in)
             prob = self.emb(dec_in) + self.pe(dec_in)
 
             for i in range(self.num_layers):
