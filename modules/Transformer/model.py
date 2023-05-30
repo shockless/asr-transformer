@@ -3,7 +3,7 @@ import torch
 from torch import nn
 
 from modules.Transformer.layers import MHA, FeedForward, TrainablePositionalEncoding
-from modules.masking import padding_mask, encoder_mask, decoder_mask
+from modules.Transformer.masking import padding_mask, encoder_mask, decoder_mask
 
 
 class EncoderLayer(nn.Module):
@@ -14,9 +14,9 @@ class EncoderLayer(nn.Module):
         self.ff_dim = ff_dim
         self.dropout = dropout
 
-        self.attention = MHA(self.num_heads, self.emb_dim)
+        self.attention = MHA(self.num_heads, self.emb_dim, self.dropout)
         self.norm1 = nn.LayerNorm(self.emb_dim)
-        self.ff = FeedForward(self.emb_dim, self.ff_dim)
+        self.ff = FeedForward(self.emb_dim, self.ff_dim, self.dropout)
         self.norm2 = nn.LayerNorm(self.emb_dim)
 
     def forward(self, x, attention_mask, non_pad_mask):
@@ -70,12 +70,11 @@ class DecoderLayer(nn.Module):
         self.emb_dim = emb_dim
         self.num_heads = num_heads
         self.ff_dim = ff_dim
-        self.dropout = dropout
-        self.mask_attention = MHA(self.num_heads, self.emb_dim)
+        self.mask_attention = MHA(self.num_heads, self.emb_dim, dropout)
         self.norm1 = nn.LayerNorm(self.emb_dim)
-        self.attention = MHA(self.num_heads, self.emb_dim)
+        self.attention = MHA(self.num_heads, self.emb_dim, dropout)
         self.norm2 = nn.LayerNorm(self.emb_dim)
-        self.ff = FeedForward(self.emb_dim, self.ff_dim)
+        self.ff = FeedForward(self.emb_dim, self.ff_dim, dropout)
         self.norm3 = nn.LayerNorm(self.emb_dim)
 
     def forward(self, x, attention_mask, enc_x, enc_mask, non_pad_mask):
@@ -101,25 +100,24 @@ class Decoder(nn.Module):
         self.num_layers = num_layers
         self.num_heads = num_heads
         self.ff_dim = ff_dim
-        self.dropout = dropout
         self.vocab_size = vocab_size
         self.padding_idx = padding_idx
         self.eos_token = eos_token
         self.bos_token = bos_token
         self.emb = nn.Embedding(vocab_size, emb_dim, padding_idx=padding_idx)
         self.pe = TrainablePositionalEncoding(self.seq_len, self.emb_dim)
-
+        self.dropout = nn.Dropout(dropout)
         self.layers = nn.ModuleList([DecoderLayer(self.emb_dim,
                                                   self.num_heads,
                                                   self.ff_dim,
-                                                  self.dropout) for i in range(self.num_layers)])
+                                                  dropout) for i in range(self.num_layers)])
         self.classifier = nn.Linear(self.emb_dim, self.vocab_size, bias=False)
 
     def forward(self, x, enc_x, enc_lens):
         non_pad_mask = padding_mask(x, padding_token_id=self.eos_token)
         attention_mask = decoder_mask(x, padding_token_id=self.eos_token).gt(0)
         dec_enc_attn_mask = encoder_mask(enc_x, enc_lens, self.seq_len)
-        x = self.emb(x) + self.pe(x)
+        x = self.dropout(self.emb(x) + self.pe(x))
         for i in range(self.num_layers):
             x = self.layers[i](x, attention_mask, enc_x, dec_enc_attn_mask, non_pad_mask)
         return self.classifier(x)
@@ -129,7 +127,7 @@ class Decoder(nn.Module):
         for i in range(self.seq_len):
             non_pad_mask = torch.ones_like(dec_in).float().unsqueeze(-1)
             attention_mask = decoder_mask(dec_in)
-            prob = self.emb(dec_in) + self.pe(dec_in)
+            prob = self.dropout(self.emb(dec_in) + self.pe(dec_in))
 
             for i in range(self.num_layers):
                 prob = self.layers[i](prob, attention_mask, enc_x, None, non_pad_mask)
