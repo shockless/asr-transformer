@@ -57,28 +57,35 @@ class AudioDataset(Dataset):
             audio = torchaudio.fuctional.resample(audio, sr, self.sr)
 
         audio = audio[:, :self.max_frames_len]
-        audio = torch.cat([audio, torch.zeros((audio.shape[0], self.max_frames_len - audio.shape[1]))], dim=1)
-
+        spectrogram_len = ceil(audio.shape[-1] / self.n_fft * 2)+1
+        pad_len = self.max_spectrogram_len - spectrogram_len
+        audio = torch.cat([audio, torch.zeros((audio.shape[0], self.max_frames_len - audio.shape[-1]))], dim=1)
         spectrogram = torchaudio.transforms.MelSpectrogram(sample_rate=self.sr,
                                                            n_fft=self.n_fft,
                                                            n_mels=self.n_mels,
                                                            center=self.center)
-
-        encoded_text = self.tokenizer.encode_plus(text, padding='max_length', truncation=True,
+        spectrogram = spectrogram(audio)
+        #spectrogram_mask = torch.cat([torch.ones(spectrogram_len), 
+                                     # torch.zeros(pad_len)], dim=-1)
+        encoded_text_mask = self.tokenizer.encode_plus(text, padding='max_length', truncation=True,
                                              max_length=self.max_tokenized_length, return_tensors='pt',return_attention_mask=True)
-        attention_mask = encoded_text.attention_mask 
-        encoded_text = encoded_text.input_ids  
-        size_no_pad = len([i for i in encoded_text.squeeze() if i!=self.tokenizer.pad_token_id])
-        ohe_text = torch.zeros((encoded_text.shape[0], encoded_text.shape[1], len(self.tokenizer)), dtype=torch.int32)
-        for i in range(0, ohe_text.shape[1]):
-            ohe_text[:, i, encoded_text[:, i]] = 1
+        attention_mask = encoded_text_mask.attention_mask 
+        
+        text_len = attention_mask.sum().item()
+        
+        encoded_text = encoded_text_mask.input_ids.detach().clone().squeeze()
+        true_text = encoded_text_mask.input_ids.detach().clone().squeeze()
+        encoded_text[text_len:] = self.tokenizer.eos_token_id
+        true_text = torch.roll(true_text, -1)
+        true_text[-1] = self.tokenizer.pad_token_id
         return {'text': text,
                 'encoded_text': encoded_text,
-                'ohe_text': ohe_text,
-                'spectre': spectrogram(audio),
+                'spectre': spectrogram,
                 'audio': audio,
-                'attention_mask': attention_mask.squeeze(),
-                'sr': sr}
+                'sr': sr, 
+                'spectrogram_len': spectrogram_len,
+                'text_len': attention_mask.sum().item(),
+                'true_text':true_text}
 
     # def listen(self, ind):
     #     plt.figure(figsize=(20, 5))

@@ -9,12 +9,12 @@ from tokenizers.decoders import BPEDecoder
 
 def tokenize(dataset , vocab_size:int, save_path:str):
     tokenizer = Tokenizer(BPE(unk_token="[UNK]"))
-    trainer = BpeTrainer(special_tokens=["[SOS]", "[EOS]", "[UNK]", "[MASK]","[PAD]"], vocab_size=vocab_size,end_of_word_suffix="[EOF]")
+    trainer = BpeTrainer(special_tokens=["[MASK]", "[SOS]", "[EOS]", "[UNK]", "[PAD]"], vocab_size=vocab_size, end_of_word_suffix="[EOF]")
     tokenizer.pre_tokenizer = Whitespace()
     tokenizer.train_from_iterator(dataset.text, trainer)
     tokenizer.post_processor = TemplateProcessing(
         single="[SOS] $A [EOS]",
-        special_tokens=[("[SOS]", 0), ("[EOS]", 1)],
+        special_tokens=[("[SOS]", 1), ("[EOS]", 2)],
     )
     tokenizer.decoder = BPEDecoder(suffix="[EOF]")
     save_path = os.path.join(save_path)
