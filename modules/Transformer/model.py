@@ -170,8 +170,8 @@ class Transformer(nn.Module):
         )
         self.seq_len = dec_seq_len
         self.vocab_size = vocab_size
-        self.emb_dim = self.n_mels  # hidden_dim * 2 * (self.n_mels // 4)
-        self.vgg_seq_out = self.enc_seq_len  # // 4
+        self.emb_dim =  hidden_dim * 2 * (self.n_mels // 4)
+        self.vgg_seq_out = self.enc_seq_len // 4
         self.eos_token = eos_token
         self.bos_token = bos_token
         print(self.vgg_seq_out, self.emb_dim)
@@ -194,11 +194,13 @@ class Transformer(nn.Module):
         self.device = device
 
     def forward(self, batch):
-        enc_x = self.encoder(batch['spectre'], batch['spectrogram_len'])
+        enc_x = self.vgg(batch['spectre'])
+        enc_x = self.encoder(enc_x, batch['spectrogram_len'])
         logits = self.decoder(batch['encoded_text'], enc_x, batch['spectrogram_len'])
         return logits
 
     def evaluate(self, batch):
-        enc_x = self.encoder(batch['spectre'], batch['spectrogram_len'])
+        enc_x = self.vgg(batch['spectre'])
+        enc_x = self.encoder(enc_x, batch['spectrogram_len'])
         preds, logits = self.decoder.evaluate(enc_x, self.device)
         return preds, logits

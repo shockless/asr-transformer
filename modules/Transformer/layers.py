@@ -11,6 +11,7 @@ class MHAHead(nn.Module):
         self.q = nn.Linear(self.emb_dim, self.emb_dim)
         self.k = nn.Linear(self.emb_dim, self.emb_dim)
         self.dropout = nn.Dropout(dropout)
+
     def forward(self, x, enc_x=None, attention_mask=None):
         if enc_x is None:
             v = self.v(x)
