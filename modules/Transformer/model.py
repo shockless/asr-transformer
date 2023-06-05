@@ -136,8 +136,6 @@ class Decoder(nn.Module):
             next_word = next_word.unsqueeze(-1)
             dec_in = torch.cat([dec_in, next_word.to(device)], dim=1).to(device)
         return dec_in, prob
-
-
 class Transformer(nn.Module):
     def __init__(self, vocab_size,
                  n_mels,
@@ -147,7 +145,7 @@ class Transformer(nn.Module):
                  num_heads,
                  ff_dim,
                  device,
-                 dropout=0.0,
+                 dropout=0.1,
                  sr=16000,
                  n_fft=1024,
                  padding_idx=4,
@@ -170,8 +168,8 @@ class Transformer(nn.Module):
         )
         self.seq_len = dec_seq_len
         self.vocab_size = vocab_size
-        self.emb_dim =  hidden_dim * 2 * (self.n_mels // 4)
-        self.vgg_seq_out = self.enc_seq_len // 4
+        self.emb_dim = self.n_mels  # hidden_dim * 2 * (self.n_mels // 4)
+        self.vgg_seq_out = self.enc_seq_len
         self.eos_token = eos_token
         self.bos_token = bos_token
         print(self.vgg_seq_out, self.emb_dim)
@@ -194,13 +192,12 @@ class Transformer(nn.Module):
         self.device = device
 
     def forward(self, batch):
-        enc_x = self.vgg(batch['spectre'])
-        enc_x = self.encoder(enc_x, batch['spectrogram_len'])
+        # enc_x = self.vgg(batch['spectre'])
+        enc_x = self.encoder(batch['spectre'], batch['spectrogram_len'])
         logits = self.decoder(batch['encoded_text'], enc_x, batch['spectrogram_len'])
         return logits
 
     def evaluate(self, batch):
-        enc_x = self.vgg(batch['spectre'])
-        enc_x = self.encoder(enc_x, batch['spectrogram_len'])
+        enc_x = self.encoder(batch['spectre'], batch['spectrogram_len'])
         preds, logits = self.decoder.evaluate(enc_x, self.device)
         return preds, logits
