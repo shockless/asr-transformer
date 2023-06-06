@@ -124,18 +124,24 @@ class Decoder(nn.Module):
 
     def evaluate(self, enc_x, device):
         dec_in = torch.full((enc_x.shape[0], 1), self.bos_token, dtype=torch.int32).to(device)
+        eoses = torch.full((enc_x.shape[0],), self.seq_len - 1)
         for i in range(self.seq_len):
             non_pad_mask = torch.ones_like(dec_in).float().unsqueeze(-1)
             attention_mask = decoder_mask(dec_in)
             prob = self.dropout(self.emb(dec_in) + self.pe(dec_in))
 
-            for i in range(self.num_layers):
-                prob = self.layers[i](prob, attention_mask, enc_x, None, non_pad_mask)
+            for j in range(self.num_layers):
+                prob = self.layers[j](prob, attention_mask, enc_x, None, non_pad_mask)
             prob = self.classifier(prob)
             next_word = prob[:, -1].argmax(dim=-1)
+            for j in range(len(next_word)):
+                if next_word[j] == self.eos_token:
+                    eoses[j] = i
             next_word = next_word.unsqueeze(-1)
             dec_in = torch.cat([dec_in, next_word.to(device)], dim=1).to(device)
-        return dec_in, prob
+        return dec_in, prob, eoses
+
+
 class Transformer(nn.Module):
     def __init__(self, vocab_size,
                  n_mels,
@@ -199,5 +205,5 @@ class Transformer(nn.Module):
 
     def evaluate(self, batch):
         enc_x = self.encoder(batch['spectre'], batch['spectrogram_len'])
-        preds, logits = self.decoder.evaluate(enc_x, self.device)
-        return preds, logits
+        preds, logits, eoses = self.decoder.evaluate(enc_x, self.device)
+        return preds, logits, eoses

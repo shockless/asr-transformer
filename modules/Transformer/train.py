@@ -71,7 +71,8 @@ def eval_epoch(model, data_loader, tokenizer, loss_function, device):
         batch['true_text'] = batch['true_text'].to(device)
 
         with torch.no_grad():
-            pred, logits = model.evaluate(batch)
+            pred, logits, eoses = model.evaluate(batch)
+            pred, logits = remove_after_eos(pred, logits, eoses, tokenizer.eos_token_id)
             pred = tokenizer.batch_decode(pred, skip_special_tokens=True)
             preds.append(pred)
             targets.append(batch['text'])
@@ -98,3 +99,12 @@ def eval_epoch(model, data_loader, tokenizer, loss_function, device):
     }
 
     return metrics, preds[-1][-1]
+
+
+def remove_after_eos(pred, logits, eoses, eos_token):
+    for i in range(eoses.shape[0]):
+        pred[i, eoses[i]:] = eos_token
+        eos = torch.zeros((logits.shape[2]))
+        eos[eoses[i]] = 1
+        logits[i, eoses[i]:] = eos
+    return pred, logits
