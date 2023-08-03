@@ -43,7 +43,7 @@ class MHA(nn.Module):
 
     def forward(self, x, enc_x=None, attention_mask=None):
         heads = torch.cat([self.heads[i](x, enc_x, attention_mask) for i in range(self.num_heads)], dim=-1)
-        return self.dropout(self.out(heads)) + x
+        return self.dropout(self.out(heads))
 
 
 class FeedForward(nn.Module):
@@ -61,7 +61,7 @@ class FeedForward(nn.Module):
         x1 = self.ReLU(x1)
         x1 = self.dropout(x1)
         x1 = self.unsqueeze(x1)
-        return x + x1
+        return x1
 
 
 class TrainablePositionalEncoding(nn.Module):
