@@ -3,32 +3,25 @@ import torch
 from torch import nn
 
 from modules.Transformer.layers import MHA, FeedForward, TrainablePositionalEncoding
-from modules.Transformer.masking import padding_mask, encoder_mask, decoder_mask
 
 
 class EncoderLayer(nn.Module):
     def __init__(self, emb_dim, num_heads, ff_dim, dropout):
         super().__init__()
-        self.emb_dim = emb_dim
-        self.num_heads = num_heads
-        self.ff_dim = ff_dim
-        self.dropout = dropout
+        self._attention = MHA(num_heads, emb_dim, dropout)
+        self._norm1 = nn.LayerNorm(emb_dim)
+        self._feedforward = FeedForward(emb_dim, ff_dim, dropout)
+        self._norm2 = nn.LayerNorm(emb_dim)
 
-        self.attention = MHA(self.num_heads, self.emb_dim, self.dropout)
-        self.norm1 = nn.LayerNorm(self.emb_dim)
-        self.ff = FeedForward(self.emb_dim, self.ff_dim, self.dropout)
-        self.norm2 = nn.LayerNorm(self.emb_dim)
-
-    def forward(self, x, attention_mask):
-        
+    def forward(self, x):
         res_x = x
-        x = self.norm1(x)
-        x = self.attention(x, attention_mask=attention_mask)
+        x = self._norm1(x)
+        x = self._attention(x)
         x += res_x
-        
+
         res_x = x
-        x = self.norm2(x)
-        x = self.ff(x)
+        x = self._norm2(x)
+        x = self._feedforward(x)
         x += res_x
         return x
 
@@ -36,197 +29,164 @@ class EncoderLayer(nn.Module):
 class Encoder(nn.Module):
     def __init__(self, seq_len, emb_dim, num_layers, num_heads, ff_dim, dropout=0.1):
         super().__init__()
-        self.seq_len = seq_len
-        self.emb_dim = emb_dim
-        self.num_layers = num_layers
-        self.num_heads = num_heads
-        self.ff_dim = ff_dim
-        self.dropout = dropout
 
-        self.lin_in = nn.Linear(emb_dim, emb_dim)
-        self.norm_in = nn.LayerNorm(emb_dim)
-        self.pe = TrainablePositionalEncoding(self.seq_len, self.emb_dim)
+        self._lin_in = nn.Linear(emb_dim, emb_dim)
+        self._norm_in = nn.LayerNorm(emb_dim)
+        self._pe = TrainablePositionalEncoding(seq_len, emb_dim)
 
-        self.layers = nn.ModuleList([EncoderLayer(self.emb_dim,
-                                                  self.num_heads,
-                                                  self.ff_dim,
-                                                  self.dropout) for _ in range(self.num_layers)])
+        self._layers = nn.ModuleList([EncoderLayer(emb_dim,
+                                                   num_heads,
+                                                   ff_dim,
+                                                   dropout) for _ in range(num_layers)])
 
-    def forward(self, x, lens):
+    def forward(self, x):
         sizes = x.size()
         x = x.view(sizes[0], sizes[1] * sizes[2], sizes[3])
 
         x = x.transpose(1, 2).contiguous()
 
-        self_attn_mask = encoder_mask(x, lens, self.seq_len)
+        x = self._norm_in(self._lin_in(x)) + self._pe(x)
 
-        x = self.norm_in(self.lin_in(x)) + self.pe(x)
-
-        for i in range(self.num_layers):
-            x = self.layers[i](x, self_attn_mask)
+        for encoder_layer in self._layers:
+            x = encoder_layer(x)
         return x
 
 
 class DecoderLayer(nn.Module):
     def __init__(self, emb_dim, num_heads, ff_dim, dropout):
         super().__init__()
-        self.emb_dim = emb_dim
-        self.num_heads = num_heads
-        self.ff_dim = ff_dim
-        self.mask_attention = MHA(self.num_heads, self.emb_dim, dropout)
-        self.norm1 = nn.LayerNorm(self.emb_dim)
-        self.attention = MHA(self.num_heads, self.emb_dim, dropout)
-        self.norm2 = nn.LayerNorm(self.emb_dim)
-        self.ff = FeedForward(self.emb_dim, self.ff_dim, dropout)
-        self.norm3 = nn.LayerNorm(self.emb_dim)
+        self._mask_attention = MHA(num_heads, emb_dim, dropout)
+        self._norm1 = nn.LayerNorm(emb_dim)
+        self._cross_attention = MHA(num_heads, emb_dim, dropout)
+        self._norm2 = nn.LayerNorm(emb_dim)
+        self._feedforward = FeedForward(emb_dim, ff_dim, dropout)
+        self._norm3 = nn.LayerNorm(emb_dim)
 
-    def forward(self, x, attention_mask, enc_x, enc_mask):
-        
+    def forward(self, x, attention_mask, enc_x):
         res_x = x
-        x = self.norm1(x)
-        x = self.mask_attention(x, attention_mask=attention_mask)
+        x = self._norm1(x)
+        x = self._mask_attention(x, attention_mask=attention_mask)
         x += res_x
-        
+
         res_x = x
-        x = self.norm2(x)
-        x = self.attention(x, enc_x=enc_x, attention_mask=enc_mask)
+        x = self._norm2(x)
+        x = self._cross_attention(x, enc_x=enc_x)
         x += res_x
-        
+
         res_x = x
-        x = self.norm3(x)
-        x = self.ff(x)
+        x = self._norm3(x)
+        x = self._feedforward(x)
         x += res_x
 
         return x
 
 
 class Decoder(nn.Module):
-    def __init__(self, vocab_size, seq_len, emb_dim, num_layers, num_heads, ff_dim, eos_token_id, bos_token_id, dropout=0.1,
-                 pad_token_id=0, ):
+    def __init__(self,
+                 vocab_size,
+                 seq_len,
+                 emb_dim,
+                 num_layers,
+                 num_heads,
+                 ff_dim,
+                 eos_token_id,
+                 dropout=0.1,
+                 pad_token_id=0):
         super().__init__()
-        self.seq_len = seq_len
-        self.emb_dim = emb_dim
-        self.num_layers = num_layers
-        self.num_heads = num_heads
-        self.ff_dim = ff_dim
-        self.vocab_size = vocab_size
-        self.pad_token_id = pad_token_id
-        self.eos_token_id = eos_token_id
-        self.bos_token_id = bos_token_id
-        self.emb = nn.Embedding(vocab_size, emb_dim, padding_idx = pad_token_id)
-        self.pe = TrainablePositionalEncoding(self.seq_len, self.emb_dim)
-        self.dropout = nn.Dropout(dropout)
-        self.layers = nn.ModuleList([DecoderLayer(self.emb_dim,
-                                                  self.num_heads,
-                                                  self.ff_dim,
-                                                  dropout) for i in range(self.num_layers)])
-        self.classifier = nn.Linear(self.emb_dim, self.vocab_size, bias=False)
 
-    def forward(self, x, x_lens, enc_x, enc_lens):
-        dec_pad_attn_mask = encoder_mask(x, x_lens, x.shape[1])
-        dec_subseq_attn_mask = decoder_mask(x)
-        attention_mask = torch.gt((dec_pad_attn_mask+dec_subseq_attn_mask), 0)
-        dec_enc_attn_mask = encoder_mask(enc_x, enc_lens, self.seq_len)
-        x = self.dropout(self.emb(x) + self.pe(x))
-        for i in range(self.num_layers):
-            x = self.layers[i](x, attention_mask, enc_x, dec_enc_attn_mask)
+        self._seq_len = seq_len
+        self._eos_token_id = eos_token_id
+
+        self._embedding = nn.Embedding(vocab_size, emb_dim, padding_idx=pad_token_id)
+        self._pe = TrainablePositionalEncoding(seq_len, emb_dim)
+        self._dropout = nn.Dropout(dropout)
+        self._layers = nn.ModuleList([DecoderLayer(emb_dim,
+                                                   num_heads,
+                                                   ff_dim,
+                                                   dropout) for _ in range(num_layers)])
+        self.classifier = nn.Linear(emb_dim, vocab_size, bias=False)
+
+    def forward(self, x, mask, enc_x):
+        x = self._dropout(self._embedding(x) + self._pe(x))
+        for decoder_layer in self._layers:
+            x = decoder_layer(x, mask, enc_x)
         return self.classifier(x)
 
-    def evaluate(self, enc_x, enc_lens):
+    def evaluate(self, x, enc_x):
         batch_size = enc_x.shape[0]
-        dec_in = torch.full((batch_size, 1), self.bos_token_id, dtype=torch.int32, device=enc_x.device)
-        dec_lens = torch.full((batch_size,), 1, dtype=torch.int32, device=enc_x.device)
-        eoses = torch.full((batch_size,), self.seq_len - 1)
-        for i in range(1, self.seq_len+1):
-            dec_lens[:] = i
-            dec_pad_attn_mask = encoder_mask(dec_in, dec_lens, dec_in.shape[1])
-            dec_subseq_attn_mask = decoder_mask(dec_in)
-            attention_mask = torch.gt((dec_pad_attn_mask+dec_subseq_attn_mask), 0)
-            prob = self.dropout(self.emb(dec_in) + self.pe(dec_in))
+        eoses = torch.full((batch_size,), self._seq_len - 1)
+        for i in range(1, self._seq_len + 1):
+            prob = self._dropout(self._embedding(x) + self._pe(x))
 
-            for j in range(self.num_layers):
-                prob = self.layers[j](prob, attention_mask, enc_x, None)
-                
+            for decoder_layer in self._layers:
+                prob = decoder_layer(prob, None, enc_x)
+
             prob = self.classifier(prob)
             next_word = prob[:, -1].argmax(dim=-1)
-            
+
             for j in range(len(next_word)):
-                if next_word[j] == self.eos_token_id:
+                if next_word[j] == self._eos_token_id:
                     eoses[j] = i
-                    
+
             next_word = next_word.unsqueeze(-1)
-            dec_in = torch.cat([dec_in, next_word.to(enc_x.device)], dim=1).to(enc_x.device)
-        return dec_in, prob, eoses
+            x = torch.cat([x, next_word.to(x.device)], dim=1).to(enc_x.device)
+        return x, prob, eoses
 
 
 class Transformer(nn.Module):
     def __init__(self, vocab_size,
-                 n_mels,
-                 enc_seq_len, dec_seq_len,
-                 hidden_dim,
-                 enc_num_layers, dec_num_layers,
+                 embedding_dim,
+                 decoder_seq_len,
+                 encoder_seq_len,
+                 encoder_num_layers,
+                 decoder_num_layers,
                  num_heads,
                  ff_dim,
-                 device,
                  dropout=0.1,
-                 sr=16000,
-                 n_fft=1024,
                  pad_token_id=4,
                  eos_token_id=2,
-                 bos_token_id=1, 
                  vgg=True):
         super().__init__()
-        self.n_mels = n_mels
-        self.enc_seq_len = ceil(enc_seq_len * sr / n_fft * 2)
-        
-        self.vgg_flag = vgg
-        self.seq_len = dec_seq_len
-        self.vocab_size = vocab_size
-        if self.vgg_flag:
-            self.vgg = nn.Sequential(nn.Conv2d(1, hidden_dim, 3, stride=1, padding=1),
+
+        if vgg:
+            self.vgg = nn.Sequential(nn.Conv2d(1, 64, 3, stride=1, padding=1),
                                      nn.ReLU(),
-                                     nn.Conv2d(hidden_dim, hidden_dim, 3, stride=1, padding=1),
+                                     nn.Conv2d(64, 64, 3, stride=1, padding=1),
                                      nn.ReLU(),
                                      nn.MaxPool2d(2, stride=2),
-                                     nn.Conv2d(hidden_dim, hidden_dim * 2, 3, stride=1, padding=1),
+                                     nn.Conv2d(64, 128, 3, stride=1, padding=1),
                                      nn.ReLU(),
-                                     nn.Conv2d(hidden_dim * 2, hidden_dim * 2, 3, stride=1, padding=1),
+                                     nn.Conv2d(128, 128, 3, stride=1, padding=1),
                                      nn.ReLU(),
                                      nn.MaxPool2d(2, stride=2))
-            self.emb_dim = hidden_dim * 2 * (self.n_mels // 4)
-            self.vgg_seq_out = self.enc_seq_len // 4
-            
-            raise NotImplementedError()
+            # emb_dim = hidden_dim * 2 * (n_fft // 4)
+            encoder_seq_len = encoder_seq_len // 4
         else:
-            self.emb_dim = self.n_mels
-            self.vgg_seq_out = self.enc_seq_len
-        self.eos_token_id = eos_token_id
-        self.bos_token_id = bos_token_id
-        print(self.vgg_seq_out, self.emb_dim)
-        self.encoder = Encoder(seq_len=self.vgg_seq_out,
-                               emb_dim=self.emb_dim,
-                               num_layers=enc_num_layers,
+            raise NotImplementedError()
+
+        self.encoder = Encoder(seq_len=encoder_seq_len,
+                               emb_dim=embedding_dim,
+                               num_layers=encoder_num_layers,
                                num_heads=num_heads,
                                ff_dim=ff_dim,
                                dropout=dropout)
+
         self.decoder = Decoder(vocab_size=vocab_size,
-                               seq_len=self.seq_len,
-                               emb_dim=self.emb_dim,
-                               num_layers=dec_num_layers,
+                               seq_len=decoder_seq_len,
+                               emb_dim=embedding_dim,
+                               num_layers=decoder_num_layers,
                                num_heads=num_heads,
                                ff_dim=ff_dim,
-                               eos_token_id=self.eos_token_id,
-                               bos_token_id=self.bos_token_id,
+                               eos_token_id=eos_token_id,
                                dropout=dropout,
                                pad_token_id=pad_token_id)
-        self.device = device
 
     def forward(self, batch):
-        enc_x = self.encoder(batch['spectre'], batch['spectrogram_len'])
-        logits = self.decoder(batch['encoded_text'], batch['text_len'], enc_x, batch['spectrogram_len'])
+        enc_x = self.encoder(batch['spectrum'])
+        logits = self.decoder(batch['text'][:, :-1], batch['mask'], enc_x)
         return logits
 
     def evaluate(self, batch):
         enc_x = self.encoder(batch['spectre'], batch['spectrogram_len'])
-        preds, logits, eoses = self.decoder.evaluate(enc_x, batch['spectrogram_len'])
+        preds, logits, eoses = self.decoder.evaluate(batch['text'], enc_x)
         return preds, logits, eoses

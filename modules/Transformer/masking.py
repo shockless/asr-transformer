@@ -17,15 +17,10 @@ def padding_mask(padded_input, input_lengths=None, padding_token_id=None):
     return mask
 
 
-def decoder_mask(x):
+def decoder_mask(x, pad_mask):
     batch_size, seq_len = x.size()
-    mask1 = torch.triu(torch.ones((batch_size, seq_len, seq_len), device=x.device, dtype=torch.uint8), diagonal=1)
-    # mask1 = mask1.unsqueeze(0).expand(batch_size, -1, -1)
-    # if padding_token_id is not None:
-    #     mask2 = x.eq(padding_token_id)
-    #     mask2 = mask2.unsqueeze(1).expand(-1, seq_len, -1)
-    #     mask1 = mask1 + mask2
-    return mask1
+    mask = torch.triu(torch.ones((batch_size, seq_len, seq_len), device=x.device, dtype=torch.uint8), diagonal=1)
+    return mask
 
 
 def encoder_mask(padded_input, input_lengths, expand_length):
