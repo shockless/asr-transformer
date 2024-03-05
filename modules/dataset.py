@@ -21,7 +21,6 @@ class AudioDataset(Dataset):
                  texts,
                  masks,
                  n_fft=1024,
-                 max_tokenized_length=100, 
                  max_frames_len=2048,
                  sr=16000):
         super().__init__()
@@ -34,14 +33,10 @@ class AudioDataset(Dataset):
         
         self._transform = torchaudio.transforms.Spectrogram(n_fft=n_fft,
                                                             center=False)
-
     
-    def __check_tokenizer_length(self, x):
-        return
-
     
     def __len__(self):
-        return len(self.texts)
+        return len(self._texts)
 
     
     def __getitem__(self, ind):

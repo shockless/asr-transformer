@@ -6,25 +6,28 @@ from math import log
 class MHAHead(nn.Module):
     def __init__(self, emb_dim, dropout):
         super().__init__()
-        self._emb_dim = emb_dim
-        self._v = nn.Linear(emb_dim, emb_dim)
-        self._q = nn.Linear(emb_dim, emb_dim)
-        self._k = nn.Linear(emb_dim, emb_dim)
-        self._dropout = nn.Dropout(dropout)
+        self.emb_dim = emb_dim
+        self.v = nn.Linear(self.emb_dim, self.emb_dim)
+        self.q = nn.Linear(self.emb_dim, self.emb_dim)
+        self.k = nn.Linear(self.emb_dim, self.emb_dim)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, enc_x=None, attention_mask=None):
-        v = self._v(x if enc_x is None else enc_x)
-        k = self._k(x if enc_x is None else enc_x)
-        q = self._q(x)
-        
-        temp = q.bmm(k.transpose(1, 2)) * (self._emb_dim ** (-0.5))
+        if enc_x is None:
+            v = self.v(x)
+            q = self.q(x)
+            k = self.k(x)
+        else:
+            v = self.v(enc_x)
+            q = self.q(x)
+            k = self.k(enc_x)
+        temp = q.bmm(k.transpose(1, 2)) * (self.emb_dim ** (-0.5))  # B, seq_len, seq_len
 
         if attention_mask is not None:
-            attention_mask.shape, temp.shape
             temp = temp.masked_fill(attention_mask.gt(0), float('-inf'))
 
-        attention_matrix = torch.nan_to_num(torch.softmax(temp, dim=-1))
-        temp = self._dropout(attention_matrix)
+        temp = torch.softmax(temp, dim=-1)
+        temp = self.dropout(temp)
         temp = temp.bmm(v)
         return temp
 
@@ -32,13 +35,15 @@ class MHAHead(nn.Module):
 class MHA(nn.Module):
     def __init__(self, num_heads, emb_dim, dropout):
         super().__init__()
-        self._dropout = nn.Dropout(dropout)
-        self._heads = nn.ModuleList([MHAHead(emb_dim, dropout) for _ in range(num_heads)])
-        self._out_linear = nn.Linear(emb_dim * num_heads, emb_dim)
+        self.num_heads = num_heads
+        self.emb_dim = emb_dim
+        self.dropout = nn.Dropout(dropout)
+        self.heads = nn.ModuleList([MHAHead(emb_dim, dropout) for i in range(self.num_heads)])
+        self.out = nn.Linear(self.emb_dim * self.num_heads, self.emb_dim)
 
     def forward(self, x, enc_x=None, attention_mask=None):
-        heads = torch.cat([head(x, enc_x, attention_mask) for head in self._heads], dim=-1)
-        return self._dropout(self._out_linear(heads))
+        heads = torch.cat([self.heads[i](x, enc_x, attention_mask) for i in range(self.num_heads)], dim=-1)
+        return self.dropout(self.out(heads)) + x
 
 
 class FeedForward(nn.Module):
@@ -56,7 +61,7 @@ class FeedForward(nn.Module):
         x1 = self.ReLU(x1)
         x1 = self.dropout(x1)
         x1 = self.unsqueeze(x1)
-        return x1
+        return x + x1
 
 
 class TrainablePositionalEncoding(nn.Module):
