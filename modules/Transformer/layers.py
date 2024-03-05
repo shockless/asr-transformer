@@ -7,9 +7,9 @@ class MHAHead(nn.Module):
     def __init__(self, emb_dim, dropout):
         super().__init__()
         self.emb_dim = emb_dim
-        self.v = nn.Linear(self.emb_dim, self.emb_dim)
-        self.q = nn.Linear(self.emb_dim, self.emb_dim)
-        self.k = nn.Linear(self.emb_dim, self.emb_dim)
+        self.v = nn.Linear(emb_dim, emb_dim)
+        self.q = nn.Linear(emb_dim, emb_dim)
+        self.k = nn.Linear(emb_dim, emb_dim)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, enc_x=None, attention_mask=None):
@@ -31,10 +31,9 @@ class MHAHead(nn.Module):
 class MHA(nn.Module):
     def __init__(self, num_heads, emb_dim, dropout):
         super().__init__()
-        self._emb_dim = emb_dim
         self._dropout = nn.Dropout(dropout)
         self._heads = nn.ModuleList([MHAHead(emb_dim, dropout) for _ in range(num_heads)])
-        self._out_linear = nn.Linear(self._emb_dim * self.num_heads, self._emb_dim)
+        self._out_linear = nn.Linear(emb_dim * num_heads, emb_dim)
 
     def forward(self, x, enc_x=None, attention_mask=None):
         heads = torch.cat([head(x, enc_x, attention_mask) for head in self._heads], dim=-1)
