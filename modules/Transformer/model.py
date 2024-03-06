@@ -13,10 +13,10 @@ class EncoderLayer(nn.Module):
         self._feedforward = FeedForward(emb_dim, ff_dim, dropout)
         self._norm2 = nn.LayerNorm(emb_dim)
 
-    def forward(self, x):
+    def forward(self, x, mask):
         res_x = x
         x = self._norm1(x)
-        x = self._attention(x)
+        x = self._attention(x, mask)
         x += res_x
 
         res_x = x
@@ -39,7 +39,7 @@ class Encoder(nn.Module):
                                                    ff_dim,
                                                    dropout) for _ in range(num_layers)])
 
-    def forward(self, x):
+    def forward(self, x, mask):
         sizes = x.size()
         x = x.view(sizes[0], sizes[1] * sizes[2], sizes[3])
         x = x.transpose(1, 2).contiguous()
@@ -47,7 +47,7 @@ class Encoder(nn.Module):
         x = self._norm_in(self._lin_in(x)) + self._pe(x)
 
         for encoder_layer in self._layers:
-            x = encoder_layer(x)
+            x = encoder_layer(x, mask)
         return x
 
 
@@ -61,15 +61,16 @@ class DecoderLayer(nn.Module):
         self._feedforward = FeedForward(emb_dim, ff_dim, dropout)
         self._norm3 = nn.LayerNorm(emb_dim)
 
-    def forward(self, x, attention_mask, enc_x):
+    def forward(self, x, mask, enc_x, enc_mask):
+
         res_x = x
         x = self._norm1(x)
-        x = self._mask_attention(x, attention_mask=attention_mask)
+        x = self._mask_attention(x, attention_mask=mask)
         x += res_x
 
         res_x = x
         x = self._norm2(x)
-        x = self._cross_attention(x, enc_x=enc_x)
+        x = self._cross_attention(x, enc_x=enc_x, attention_mask=enc_mask)
         x += res_x
 
         res_x = x
@@ -106,9 +107,23 @@ class Decoder(nn.Module):
         self._classifier = nn.Linear(emb_dim, vocab_size, bias=False)
 
     def forward(self, x, mask, enc_x):
+        batch_size, seq_len = x.size()
+        _, enc_len = enc_x.size()
+        mask = mask.lt(1)
+
+        encoder_mask = mask.unsqueeze(1).expand(-1, enc_len, -1)
+
+        mask = mask.unsqueeze(1).expand(-1, seq_len, -1)
+
+        attention_mask = torch.triu(torch.ones((seq_len, seq_len), device=mask.device, dtype=torch.uint8), diagonal=1)
+        attention_mask = attention_mask.unsqueeze(0).expand(batch_size, -1, -1)
+
+        mask = torch.logical_or(mask, mask.mT)
+        mask = torch.logical_or(mask, attention_mask)
+
         x = self._dropout(self._embedding(x) + self._pe(x))
         for decoder_layer in self._layers:
-            x = decoder_layer(x, mask, enc_x)
+            x = decoder_layer(x, mask, enc_x, encoder_mask)
         return self._classifier(x)
 
     def evaluate(self, x, enc_x):
@@ -189,18 +204,6 @@ class Transformer(nn.Module):
     def forward(self, spectrum, text, mask):
         vgg_out = self.vgg(spectrum)
         enc_x = self.encoder(vgg_out)
-    
-        batch_size, seq_len = text.size()
-        
-        mask = mask.lt(1)
-        mask = mask.unsqueeze(1).expand(-1, seq_len, -1)
-        
-        attention_mask = torch.triu(torch.ones((seq_len, seq_len), device=mask.device, dtype=torch.uint8), diagonal=1)
-        attention_mask = attention_mask.unsqueeze(0).expand(batch_size, -1, -1)
-        
-        mask = torch.logical_or(mask, mask.mT)
-        mask = torch.logical_or(mask, attention_mask)
-        
         logits = self.decoder(text, mask, enc_x)
         return logits
 
