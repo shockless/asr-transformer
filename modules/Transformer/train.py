@@ -17,12 +17,19 @@ def train_epoch(model, data_loader, loss_function, optimizer, device):
         spectrum = batch['spectrum'].to(device)
         text = batch['text'].to(device)
         mask = batch['mask'].to(device)
-
+        spectrum_mask = batch['spectrum_mask'].to(device)
+        
+        input_text = text.detach().clone()
+        input_text[:, mask.sum(dim=-1)-1] = input_text[:, -1]
+        mask[:, mask.sum(dim=-1)-1] = mask[:, -1]
+        input_text, mask = input_text[:, :-1], mask[:, :-1]
         optimizer.zero_grad()
-        logits = model(spectrum, text[:, :-1], mask[:, :-1])
+        
+
+        logits = model(spectrum, spectrum_mask, input_text, mask)
         pred = logits.argmax(dim=-1)
-        preds.append(pred)
-        targets.append(text[:, :-1])
+        preds.append(pred.to('cpu'))
+        targets.append(text[:, :-1].to('cpu'))
         loss = loss_function(logits.transpose(1, 2), text[:, 1:])
         total_train_loss += loss.item()
         loss.backward()
@@ -46,7 +53,7 @@ def train_epoch(model, data_loader, loss_function, optimizer, device):
         # "Train Accuracy": acc_t,
     }
 
-    return metrics
+    return metrics, preds, targets
 
 
 def eval_epoch(model, data_loader, eos_token_id, bos_token_id, loss_function, device):
@@ -61,9 +68,10 @@ def eval_epoch(model, data_loader, eos_token_id, bos_token_id, loss_function, de
         for batch in tqdm(data_loader):
             spectrum = batch['spectrum'].to(device)
             text = batch['text'].to(device)
+            spectrum_mask = batch['spectrum_mask'].to(device)
+
             text_in = torch.full((text.shape[0], 1), bos_token_id, dtype=torch.int32).to(device)
-            
-            pred, logits, eoses = model.evaluate(spectrum, text_in)
+            pred, logits, eoses = model.evaluate(spectrum, spectrum_mask, text_in)
             pred, logits = remove_after_eos(pred, logits, eoses, eos_token_id)
             # pred = tokenizer.batch_decode(pred, skip_special_tokens=True)
             preds.append(pred.to('cpu'))

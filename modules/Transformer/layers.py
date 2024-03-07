@@ -20,7 +20,6 @@ class MHAHead(nn.Module):
         temp = q.bmm(k.transpose(1, 2)) * (self._emb_dim ** (-0.5))
 
         if attention_mask is not None:
-            attention_mask.shape, temp.shape
             temp = temp.masked_fill(attention_mask.gt(0), float('-inf'))
 
         attention_matrix = torch.nan_to_num(torch.softmax(temp, dim=-1))

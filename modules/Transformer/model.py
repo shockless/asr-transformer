@@ -15,14 +15,12 @@ class EncoderLayer(nn.Module):
 
     def forward(self, x, mask):
         res_x = x
-        x = self._norm1(x)
-        x = self._attention(x, mask)
-        x += res_x
-
+        x = self._attention(x, attention_mask=mask)
+        x = self._norm1(x + res_x)
+        
         res_x = x
-        x = self._norm2(x)
         x = self._feedforward(x)
-        x += res_x
+        x = self._norm2(x + res_x)
         return x
 
 
@@ -42,12 +40,21 @@ class Encoder(nn.Module):
     def forward(self, x, mask):
         sizes = x.size()
         x = x.view(sizes[0], sizes[1] * sizes[2], sizes[3])
+        
         x = x.transpose(1, 2).contiguous()
+        
+        batch_size, seq_len, input_dim = x.shape
+        
+        encoder_mask = mask.unsqueeze(1).expand(-1, seq_len, -1)
+        encoder_mask = encoder_mask.lt(1)
+        
+        encoder_mask = torch.logical_or(encoder_mask, encoder_mask.mT)
         
         x = self._norm_in(self._lin_in(x)) + self._pe(x)
 
         for encoder_layer in self._layers:
-            x = encoder_layer(x, mask)
+            x = encoder_layer(x, encoder_mask)
+            
         return x
 
 
@@ -62,22 +69,18 @@ class DecoderLayer(nn.Module):
         self._norm3 = nn.LayerNorm(emb_dim)
 
     def forward(self, x, mask, enc_x, enc_mask):
-
+        # print(x.shape)
         res_x = x
-        x = self._norm1(x)
         x = self._mask_attention(x, attention_mask=mask)
-        x += res_x
-
+        x = self._norm1(x + res_x)
+                
         res_x = x
-        x = self._norm2(x)
         x = self._cross_attention(x, enc_x=enc_x, attention_mask=enc_mask)
-        x += res_x
+        x = self._norm2(x + res_x)
 
         res_x = x
-        x = self._norm3(x)
         x = self._feedforward(x)
-        x += res_x
-
+        x = self._norm3(x + res_x)
         return x
 
 
@@ -106,37 +109,44 @@ class Decoder(nn.Module):
                                                    dropout) for _ in range(num_layers)])
         self._classifier = nn.Linear(emb_dim, vocab_size, bias=False)
 
-    def forward(self, x, mask, enc_x):
+    def forward(self, x, mask, enc_x, enc_mask):
         batch_size, seq_len = x.size()
-        _, enc_len = enc_x.size()
-        mask = mask.lt(1)
-
-        encoder_mask = mask.unsqueeze(1).expand(-1, enc_len, -1)
-
-        mask = mask.unsqueeze(1).expand(-1, seq_len, -1)
-
-        attention_mask = torch.triu(torch.ones((seq_len, seq_len), device=mask.device, dtype=torch.uint8), diagonal=1)
+        _, enc_len, emb_dim = enc_x.size()
+        
+        mask_neg = mask.lt(1)
+        enc_mask = enc_mask.lt(1)
+        
+        dec_mask = mask_neg.unsqueeze(1).expand(-1, enc_len, -1)
+        enc_mask = enc_mask.unsqueeze(1).expand(-1, seq_len, -1)
+        
+        enc_mask = torch.logical_or(enc_mask, dec_mask.mT)
+        
+        mask_neg = mask_neg.unsqueeze(1).expand(-1, seq_len, -1)
+        
+        attention_mask = torch.triu(torch.ones((seq_len, seq_len), device=mask_neg.device, dtype=torch.uint8), diagonal=1)
         attention_mask = attention_mask.unsqueeze(0).expand(batch_size, -1, -1)
-
-        mask = torch.logical_or(mask, mask.mT)
-        mask = torch.logical_or(mask, attention_mask)
-
+        mask_neg = torch.logical_or(mask_neg, mask_neg.mT)
+        mask_neg = torch.logical_or(mask_neg, attention_mask)
+        
         x = self._dropout(self._embedding(x) + self._pe(x))
+        
         for decoder_layer in self._layers:
-            x = decoder_layer(x, mask, enc_x, encoder_mask)
+            x = decoder_layer(x, mask_neg, enc_x, enc_mask)
+            
         return self._classifier(x)
 
-    def evaluate(self, x, enc_x):
-        batch_size, seq_len = x.shape
-        eoses = torch.full((batch_size,), self._seq_len - 1)
+    def evaluate(self, x, enc_x, enc_mask):
+        eoses = torch.full((x.shape[0],), self._seq_len - 1)
         for i in range(1, self._seq_len + 1):
+            batch_size, seq_len = x.shape
+            encoder_mask = enc_mask.unsqueeze(1).expand(-1, seq_len, -1)
             attention_mask = torch.triu(torch.ones((seq_len, seq_len), device=x.device, dtype=torch.uint8), diagonal=1)
             attention_mask = attention_mask.unsqueeze(0).expand(batch_size, -1, -1)
             
             prob = self._dropout(self._embedding(x) + self._pe(x))
             
             for decoder_layer in self._layers:
-                prob = decoder_layer(prob, attention_mask, enc_x)
+                prob = decoder_layer(prob, attention_mask, enc_x, encoder_mask)
 
             prob = self._classifier(prob)
             next_word = prob[:, -1].argmax(dim=-1)
@@ -152,7 +162,7 @@ class Decoder(nn.Module):
 
 class Transformer(nn.Module):
     def __init__(self, vocab_size,
-                 nfft,
+                 input_dim,
                  embedding_dim,
                  decoder_seq_len,
                  encoder_seq_len,
@@ -163,11 +173,12 @@ class Transformer(nn.Module):
                  dropout=0.1,
                  pad_token_id=4,
                  eos_token_id=2,
-                 vgg=True):
+                 vgg=False):
         super().__init__()
-
+        self._vgg = None
         if vgg:
-            self.vgg = nn.Sequential(nn.Conv2d(1, 64, 3, stride=1, padding=1),
+            raise NotImplementedError()
+            self._vgg = nn.Sequential(nn.Conv2d(1, 64, 3, stride=1, padding=1),
                                      nn.ReLU(),
                                      nn.Conv2d(64, 64, 3, stride=1, padding=1),
                                      nn.ReLU(),
@@ -179,12 +190,10 @@ class Transformer(nn.Module):
                                      nn.MaxPool2d(2, stride=2))
             # emb_dim = hidden_dim * 2 * (n_fft // 4)
             encoder_seq_len = encoder_seq_len // 4
-            vgg_dim = (nfft // 2 + 1) // 4
-        else:
-            raise NotImplementedError()
+            input_dim = input_dim // 4 * 128            
 
         self.encoder = Encoder(seq_len=encoder_seq_len,
-                               input_dim=vgg_dim*128,
+                               input_dim=input_dim,
                                emb_dim=embedding_dim,
                                num_layers=encoder_num_layers,
                                num_heads=num_heads,
@@ -201,14 +210,13 @@ class Transformer(nn.Module):
                                dropout=dropout,
                                pad_token_id=pad_token_id)
 
-    def forward(self, spectrum, text, mask):
-        vgg_out = self.vgg(spectrum)
-        enc_x = self.encoder(vgg_out)
-        logits = self.decoder(text, mask, enc_x)
+    def forward(self, spectrum, spectrum_mask, text, mask):
+        enc_x = self.encoder(spectrum, spectrum_mask)
+        logits = self.decoder(text, mask, enc_x, spectrum_mask)
         return logits
 
-    def evaluate(self, spectrum, text):
-        vgg_out = self.vgg(spectrum)
-        enc_x = self.encoder(vgg_out)
-        preds, logits, eoses = self.decoder.evaluate(text, enc_x)
+    def evaluate(self, spectrum, spectrum_mask, text):
+        # vgg_out = self.vgg(spectrum)
+        enc_x = self.encoder(spectrum, spectrum_mask)
+        preds, logits, eoses = self.decoder.evaluate(text, enc_x, spectrum_mask)
         return preds, logits, eoses
