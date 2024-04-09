@@ -70,7 +70,7 @@ def eval_epoch(model, data_loader, eos_token_id, bos_token_id, loss_function, de
             spectrum_mask = batch['spectrum_mask'].to(device)
 
             text_in = torch.full((text.shape[0], 1), bos_token_id, dtype=torch.int32).to(device)
-            pred, logits, eoses = model.evaluate(spectrum, spectrum_mask, text_in)
+            pred, logits, eoses = model.evaluate(spectrum, text_in)
             pred, logits = remove_after_eos(pred, logits, eoses, eos_token_id)
             # pred = tokenizer.batch_decode(pred, skip_special_tokens=True)
             preds.append(pred.to('cpu'))

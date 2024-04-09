@@ -159,13 +159,12 @@ class Transformer(nn.Module):
                  pad_token_id=4,
                  eos_token_id=2):
         super().__init__()
-        self.input_layer = nn.Sequential(nn.Conv2d(1, 1, 3, stride=2),
+        self.input_layer = nn.Sequential(nn.Conv2d(1, 64, 3, stride=2),
                                          nn.ReLU(),
-                                         nn.Conv2d(1, 1, 3, stride=2),
+                                         nn.Conv2d(64, 64, 3, stride=2),
                                          nn.ReLU())
+        input_dim = (((input_dim - 3) // 2 + 1 - 3) // 2 + 1) * 64
         self.input_encoding = nn.Linear(input_dim, embedding_dim)
-        encoder_seq_len = encoder_seq_len // 4
-        input_dim = input_dim // 4 * 128
 
         self.encoder = Encoder(seq_len=encoder_seq_len,
                                input_dim=input_dim,
@@ -186,16 +185,16 @@ class Transformer(nn.Module):
                                pad_token_id=pad_token_id)
 
 
-def forward(self, spectrum, text, mask):
-    spectrum = self.input_layer(spectrum)
-    spectrum = self.input_encoding(spectrum)
-    enc_x = self.encoder(spectrum)
-    logits = self.decoder(text, mask, enc_x)
-    return logits
+    def forward(self, spectrum, text, mask):
+        spectrum = self.input_layer(spectrum)
+        enc_x = self.encoder(spectrum)
+        logits = self.decoder(text, mask, enc_x)
+        return logits
 
 
-def evaluate(self, spectrum, text):
-    # vgg_out = self.vgg(spectrum)
-    enc_x = self.encoder(spectrum)
-    preds, logits, eoses = self.decoder.evaluate(text, enc_x)
-    return preds, logits, eoses
+    def evaluate(self, spectrum, text):
+        # vgg_out = self.vgg(spectrum)
+        spectrum = self.input_layer(spectrum)
+        enc_x = self.encoder(spectrum)
+        preds, logits, eoses = self.decoder.evaluate(text, enc_x)
+        return preds, logits, eoses
