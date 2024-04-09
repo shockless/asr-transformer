@@ -16,7 +16,7 @@ class MHAHead(nn.Module):
         v = self._v(x if enc_x is None else enc_x)
         k = self._k(x if enc_x is None else enc_x)
         q = self._q(x)
-        
+
         temp = q.bmm(k.transpose(1, 2)) * (self._emb_dim ** (-0.5))
 
         if attention_mask is not None:
@@ -61,12 +61,11 @@ class FeedForward(nn.Module):
 class TrainablePositionalEncoding(nn.Module):
     def __init__(self, seq_len, emb_dim):
         super().__init__()
-
         pe = torch.zeros(seq_len, emb_dim, requires_grad=False)
         position = torch.arange(0, seq_len).unsqueeze(1).float()
-        exp_term = torch.exp(torch.arange(0, emb_dim, 2).float() * -(log(10000.0) / emb_dim))
-        pe[:, 0::2] = torch.sin(position * exp_term)
-        pe[:, 1::2] = torch.cos(position * exp_term)
+        exp_term = position / (10000. ** (torch.arange(0, emb_dim).float() / emb_dim))
+        pe[:, 0:emb_dim // 2] = torch.sin(exp_term[:, 0:emb_dim // 2])
+        pe[:, emb_dim // 2:] = torch.cos(exp_term[:, emb_dim // 2:])
         pe = pe.unsqueeze(0)
         self.register_buffer('pe', pe)
 

@@ -18,15 +18,14 @@ def train_epoch(model, data_loader, loss_function, optimizer, device):
         text = batch['text'].to(device)
         mask = batch['mask'].to(device)
         spectrum_mask = batch['spectrum_mask'].to(device)
-        
+
         input_text = text.detach().clone()
-        input_text[:, mask.sum(dim=-1)-1] = input_text[:, -1]
-        mask[:, mask.sum(dim=-1)-1] = mask[:, -1]
+        input_text[:, mask.sum(dim=-1) - 1] = input_text[:, -1]
+        mask[:, mask.sum(dim=-1) - 1] = mask[:, -1]
         input_text, mask = input_text[:, :-1], mask[:, :-1]
         optimizer.zero_grad()
-        
 
-        logits = model(spectrum, spectrum_mask, input_text, mask)
+        logits = model(spectrum, input_text, mask)
         pred = logits.argmax(dim=-1)
         preds.append(pred.to('cpu'))
         targets.append(text[:, :-1].to('cpu'))
@@ -37,16 +36,16 @@ def train_epoch(model, data_loader, loss_function, optimizer, device):
 
     acc_t = 0
     wer = 0
-#     for batch in range(dl_size):
-#         acc = 0
-#         for sample in range(len(preds[batch])):
-#             acc += int(preds[batch][sample] == targets[batch][sample])
+    #     for batch in range(dl_size):
+    #         acc = 0
+    #         for sample in range(len(preds[batch])):
+    #             acc += int(preds[batch][sample] == targets[batch][sample])
 
-#         acc /= sample + 1
-#         # wer += word_error_rate(preds[batch], targets[batch])
-#         acc_t += acc
-#     acc_t = acc_t / dl_size
-#     # wer = wer / dl_size
+    #         acc /= sample + 1
+    #         # wer += word_error_rate(preds[batch], targets[batch])
+    #         acc_t += acc
+    #     acc_t = acc_t / dl_size
+    #     # wer = wer / dl_size
     metrics = {
         "Train Loss": total_train_loss / dl_size,
         # "Train Word Accuracy": 1 - wer.item(),
@@ -80,18 +79,18 @@ def eval_epoch(model, data_loader, eos_token_id, bos_token_id, loss_function, de
             loss = loss_function(logits.transpose(1, 2), text[:, 1:])
             total_train_loss += loss.item()
 
-#     acc_t = 0
-#     wer = 0
-#     for batch in range(dl_size):
-#         acc = 0
-#         for sample in range(len(preds[batch])):
-#             acc += int(preds[batch][sample] == targets[batch][sample])
+    #     acc_t = 0
+    #     wer = 0
+    #     for batch in range(dl_size):
+    #         acc = 0
+    #         for sample in range(len(preds[batch])):
+    #             acc += int(preds[batch][sample] == targets[batch][sample])
 
-#         acc /= sample + 1
-#         wer += word_error_rate(preds[batch], targets[batch])
-#         acc_t += acc
-#     acc_t = acc_t / dl_size
-#     wer = wer / dl_size
+    #         acc /= sample + 1
+    #         wer += word_error_rate(preds[batch], targets[batch])
+    #         acc_t += acc
+    #     acc_t = acc_t / dl_size
+    #     wer = wer / dl_size
     metrics = {
         "Val Loss": total_train_loss / dl_size,
         # "Val Word Accuracy": 1 - wer.item(),
