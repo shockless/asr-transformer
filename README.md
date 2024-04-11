@@ -1,4 +1,5 @@
 # ASR-Transformer
+My implementation of Speech-Transformer model using PyTorch
 
 ## Technologies used
 - Torch 2.0
@@ -20,28 +21,10 @@
   pages={5884-5888},
   keywords={Hidden Markov models;Encoding;Training;Decoding;Speech recognition;Time-frequency analysis;Spectrogram;Speech Recognition;Sequence-to-Sequence;Attention;Transformer},
   doi={10.1109/ICASSP.2018.8462506}}
-
-
-@misc{winata2020lightweight,
-      title={Lightweight and Efficient End-to-End Speech Recognition Using Low-Rank Transformer}, 
-      author={Genta Indra Winata and Samuel Cahyawijaya and Zhaojiang Lin and Zihan Liu and Pascale Fung},
-      year={2020},
-      eprint={1910.13923},
-      archivePrefix={arXiv},
-      primaryClass={cs.CL}
-}
-
-@misc{chorowski2015attentionbased,
-      title={Attention-Based Models for Speech Recognition}, 
-      author={Jan Chorowski and Dzmitry Bahdanau and Dmitriy Serdyuk and Kyunghyun Cho and Yoshua Bengio},
-      year={2015},
-      eprint={1506.07503},
-      archivePrefix={arXiv},
-      primaryClass={cs.CL}
-}
 ```
 
 
 ### TODO:
 - Train on big corpus and evaluate metrics
+- Implement 2d-attention proposed in the paper (it has not been implemented due to minor changes in metrics in the evaluation results in the paper)
 - Make beamsearch instead of greedy-search
