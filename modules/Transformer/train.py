@@ -67,16 +67,24 @@ def eval_epoch(model, data_loader, eos_token_id, bos_token_id, loss_function, de
         for batch in tqdm(data_loader):
             spectrum = batch['spectrum'].to(device)
             text = batch['text'].to(device)
-            spectrum_mask = batch['spectrum_mask'].to(device)
-
             text_in = torch.full((text.shape[0], 1), bos_token_id, dtype=torch.int32).to(device)
-            pred, logits, eoses = model.evaluate(spectrum, text_in)
-            pred, logits = remove_after_eos(pred, logits, eoses, eos_token_id)
+            pred, logits = model.evaluate(spectrum, text_in)
+            text = text[:, 1:]
+            for i in range(len(logits)):
+                if logits[i].shape[0]>text.shape[1]:
+                    logits[i] = logits[i][:text.shape[1]]
+                else:
+                    logits[i] = torch.cat((logits[i], 
+                                           torch.zeros((text.shape[1]-logits[i].shape[0], 
+                                                        logits[i].shape[1]))), dim=0)
+            logits = torch.stack(logits, dim=0)
+            
+            # pred, logits = remove_after_eos(pred, logits, eoses, eos_token_id)
             # pred = tokenizer.batch_decode(pred, skip_special_tokens=True)
             preds.append(pred.to('cpu'))
             targets.append(text.to('cpu'))
 
-            loss = loss_function(logits.transpose(1, 2), text[:, 1:])
+            loss = loss_function(logits.transpose(1, 2), text)
             total_train_loss += loss.item()
 
     #     acc_t = 0

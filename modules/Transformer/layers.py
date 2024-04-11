@@ -4,12 +4,12 @@ from math import log
 
 
 class MHAHead(nn.Module):
-    def __init__(self, emb_dim, dropout):
+    def __init__(self, emb_dim, head_dim, dropout):
         super().__init__()
         self._emb_dim = emb_dim
-        self._v = nn.Linear(emb_dim, emb_dim)
-        self._q = nn.Linear(emb_dim, emb_dim)
-        self._k = nn.Linear(emb_dim, emb_dim)
+        self._v = nn.Linear(emb_dim, head_dim)
+        self._q = nn.Linear(emb_dim, head_dim)
+        self._k = nn.Linear(emb_dim, head_dim)
         self._dropout = nn.Dropout(dropout)
 
     def forward(self, x, enc_x=None, attention_mask=None):
@@ -32,8 +32,8 @@ class MHA(nn.Module):
     def __init__(self, num_heads, emb_dim, dropout):
         super().__init__()
         self._dropout = nn.Dropout(dropout)
-        self._heads = nn.ModuleList([MHAHead(emb_dim, dropout) for _ in range(num_heads)])
-        self._out_linear = nn.Linear(emb_dim * num_heads, emb_dim)
+        self._heads = nn.ModuleList([MHAHead(emb_dim, emb_dim // num_heads, dropout) for _ in range(num_heads)])
+        self._out_linear = nn.Linear(emb_dim, emb_dim)
 
     def forward(self, x, enc_x=None, attention_mask=None):
         heads = torch.cat([head(x, enc_x, attention_mask) for head in self._heads], dim=-1)

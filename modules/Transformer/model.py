@@ -1,6 +1,7 @@
 from math import ceil
 import torch
 from torch import nn
+from tqdm.auto import tqdm
 
 from modules.Transformer.layers import MHA, FeedForward, TrainablePositionalEncoding
 
@@ -122,27 +123,32 @@ class Decoder(nn.Module):
         return self._classifier(x)
 
     def evaluate(self, x, enc_x):
-        eoses = torch.full((x.shape[0],), self._seq_len - 1)
-        for i in range(1, self._seq_len + 1):
-            batch_size, seq_len = x.shape
-            attention_mask = torch.triu(torch.ones((seq_len, seq_len), device=x.device, dtype=torch.uint8), diagonal=1)
-            attention_mask = attention_mask.unsqueeze(0).expand(batch_size, -1, -1)
+        # print(x.shape)
+        batch_size, _ = x.shape
+        preds, probs = [], []
+        for sample in range(batch_size):
+            decoder_input = x[sample].unsqueeze(0)
+            encoder_output = enc_x[sample].unsqueeze(0)
+            for i in range(1, self._seq_len + 1):
 
-            prob = self._dropout(self._embedding(x) + self._pe(x))
+                attention_mask = torch.triu(torch.ones((i, i), device=x.device, dtype=torch.uint8), diagonal=1)
+                # attention_mask = attention_mask.unsqueeze(0)
 
-            for decoder_layer in self._layers:
-                prob = decoder_layer(prob, attention_mask, enc_x)
+                prob = self._dropout(self._embedding(decoder_input) + self._pe(decoder_input))
 
-            prob = self._classifier(prob)
-            next_word = prob[:, -1].argmax(dim=-1)
+                for decoder_layer in self._layers:
+                    prob = decoder_layer(prob, attention_mask, encoder_output)
 
-            for j in range(len(next_word)):
-                if next_word[j] == self._eos_token_id:
-                    eoses[j] = i
+                prob = self._classifier(prob)
+                next_word = prob.argmax(dim=-1)[:,-1].unsqueeze(1)
+                decoder_input = torch.cat([decoder_input, next_word.to(decoder_input.device)], 
+                                          dim=-1).to(encoder_output.device)
+                
+                if next_word.item() == self._eos_token_id or i == self._seq_len:
+                    preds.append(decoder_input)
+                    probs.append(prob[:,:-1].squeeze())
 
-            next_word = next_word.unsqueeze(-1)
-            x = torch.cat([x, next_word.to(x.device)], dim=1).to(enc_x.device)
-        return x, prob, eoses
+        return decoder_input, probs
 
 
 class Transformer(nn.Module):
@@ -196,5 +202,5 @@ class Transformer(nn.Module):
         # vgg_out = self.vgg(spectrum)
         spectrum = self.input_layer(spectrum)
         enc_x = self.encoder(spectrum)
-        preds, logits, eoses = self.decoder.evaluate(text, enc_x)
-        return preds, logits, eoses
+        preds, logits = self.decoder.evaluate(text, enc_x)
+        return preds, logits
